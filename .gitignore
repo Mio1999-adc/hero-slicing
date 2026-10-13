@@ -1,0 +1,27 @@
+# upstream platforms (cloned separately, see docs)
+platforms/
+
+# build outputs
+build/
+cmake-cache/
+*.o
+*.so
+*.a
+*.deb
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# experiment outputs
+experiments/EXP-*/
+logs/
+results/
+*.log
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
