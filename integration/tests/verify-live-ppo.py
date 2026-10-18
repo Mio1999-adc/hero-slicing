@@ -25,7 +25,8 @@ def run(binary: Path, output: Path, tier: str, formulation: str = "baseline") ->
         "--urllcUes=2" if regional else "--urllcUes=1",
         "--mmtcUes=2" if regional else "--mmtcUes=1",
         "--embbRateBps=1000000", "--enableSliceEnforcement=1", "--enablePpo=1",
-        f"--ppoTier={tier}", "--ppoMode=train", "--ppoUpdateEvery=2", "--ppoSeed=41",
+        f"--ppoTier={tier}", "--ppoMode=train", "--ppoUpdateEvery=2", "--ppoMaxEpisodes=2",
+        "--ppoEpisodeTransitions=2", "--ppoSeed=41",
         f"--ppoFormulation={formulation}",
         f"--ppoCheckpointDir={checkpoint}", "--enableE2=0", "--realtime=0",
     ]
@@ -71,6 +72,15 @@ def run(binary: Path, output: Path, tier: str, formulation: str = "baseline") ->
     updates = [event for event in events if event.get("record_type") == "update"]
     if not transitions or not updates:
         raise AssertionError(f"training journal is missing transition/update events: {experience}")
+    if tier == "local":
+        episodes = [event for event in events if event.get("record_type") == "episode"]
+        if [event.get("episode_id") for event in episodes] != [1, 2]:
+            raise AssertionError(f"local run did not emit two configured per-gNB episode records: {episodes}")
+        if any(event.get("episode_steps") != 2 or event.get("simulator_reset") is not False for event in episodes):
+            raise AssertionError("episodes must use two real control transitions and explicitly record no simulator reset")
+        if len(transitions) != 4 or not all(
+                transition.get("truncated") for transition in transitions if transition.get("episode_step") == 2):
+            raise AssertionError("episode boundaries must truncate PPO GAE and stop collection at the configured cap")
     if not all("actor_loss" in event.get("metrics", {}) and
                "critic_loss" in event.get("metrics", {}) and
                event.get("update_duration_ms", 0) >= 0 for event in updates):
@@ -97,6 +107,12 @@ def run(binary: Path, output: Path, tier: str, formulation: str = "baseline") ->
                     math.isclose(bounds.get("global_upper_bound", 0), 0.95, abs_tol=1e-9) and
                     bounds.get("state_action_lower_bound", 1) <= reward <= bounds.get("state_action_upper_bound", -1)):
                 raise AssertionError(f"reward violated logged analytical bounds: {event}")
+        for episode in (event for event in events if event.get("record_type") == "episode"):
+            if not (math.isclose(episode.get("reward_min", 1), -0.05, abs_tol=1e-9) and
+                    math.isclose(episode.get("reward_max", 0), 0.95, abs_tol=1e-9) and
+                    -0.05 <= episode.get("mean_reward", -1) <= 0.95 and
+                    math.isclose(episode.get("reward_gap"), 0.95 - episode.get("mean_reward"), abs_tol=1e-9)):
+                raise AssertionError(f"UE-aware episode mean violates its analytical reward bound: {episode}")
             if len(event.get("observation", [])) != 144 or len(event.get("next_observation", [])) != 144:
                 raise AssertionError("UE-aware local observation schema must remain 144 values (24 features × 3 slices × value/mask)")
         expected_columns = ("applied_embb_ratio", "dl_slice_budget_embb", "dl_slice_used_embb", "prbs_per_rbg")

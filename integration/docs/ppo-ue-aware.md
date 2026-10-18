@@ -50,6 +50,14 @@ The actor remains a Dirichlet policy over the three-slice simplex. The same floa
 
 The online order remains: build the current state, sample an action, apply it to that gNB, collect the next completed measurement window, calculate the reward for the previous action, store `(s,a,logπ,r,s')`, and update only after the configured rollout count. Local controllers process gNB requests independently and sequentially on the simulation thread; there is no shared local rollout or cross-gNB training. Existing GAE, advantage normalization, PPO clipping, minibatch shuffling, gradient clipping (default norm `0.5`), entropy regularization, and approximate-KL reporting remain. `target_kl` can be enabled in `PpoConfig` for early stop; it is currently unset by default. Baseline PPO defaults remain unchanged.
 
+### Explicit local training episodes
+
+The dashboard and native runner now configure `ppoMaxEpisodes` (default `100`) and `ppoEpisodeTransitions` (default `32`) independently from `ppoUpdateEvery` (default `8`). Each gNB has its own episode counter. One learning episode is exactly the configured number of completed, action-aligned measurement transitions for that gNB. The running episode mean is emitted after each transition; the final episode record contains the mean across all valid transitions, best completed mean, bound, gap, transition count, and PPO optimizer-update count. The online reward and episode mean are checked against `[-wH, 1-wH]` for UE-aware reward. The dashboard surfaces any violation as an error.
+
+ns-3 does not currently expose a safe scenario reset operation through this integration. Episode boundaries therefore do **not** restart the simulator or reset traffic, radio, mobility, or manager state. They are fixed horizons in one continuing simulation, and the final transition at a horizon is marked truncated so GAE bootstraps from its next observation while stopping the advantage trace across the boundary. PPO optimizer rollout batches remain independently sized and can contain transitions from more than one episode; they are never labeled as episodes. After a gNB completes its configured maximum episodes, its policy stops updating and is checkpointed; the simulation continues with that frozen policy.
+
+The dashboard plots actual per-gNB mean reward against episode number, with raw and moving-average curves, a reward maximum line from the recorded active configuration, and an optional minimum line. It includes current episode progress, completed-episode best, reward gap, reward-range position, environment transition count, and optimizer update count. Runs are selectable from saved dashboard run logs, and curves can be filtered by gNB. Bounds are sourced from episode records, so changes between training runs use their own `wH`; for the default `wH=0.05`, the maximum is `0.95` and minimum is `-0.05`. These mathematical bounds do not imply attainable performance or convergence.
+
 UE-aware local checkpoints are named `local-ue-aware-gnb-<id>.pt`; baseline checkpoints retain `local-gnb-<id>.pt`. Observation dimension checks prevent cross-loading. The dashboard's inference validation checks for the checkpoint set matching both selected gNB count and formulation.
 
 ## Training diagnostics and current evidence
@@ -85,7 +93,8 @@ integration/build-optimized/native-measurements \
   --gnbs=1 --ues=3 --duration=8 --sampleMs=200 \
   --sliceAssignment=explicit --embbUes=1 --urllcUes=1 --mmtcUes=1 \
   --enableSliceEnforcement=1 --enablePpo=1 --ppoTier=local --ppoFormulation=ue-aware \
-  --ppoMode=train --ppoUpdateEvery=8 --ppoSeed=1 \
+  --ppoMode=train --ppoUpdateEvery=8 --ppoMaxEpisodes=100 \
+  --ppoEpisodeTransitions=32 --ppoSeed=1 \
   --ppoCheckpointDir=integration/build-optimized/ppo-checkpoints/local \
   --csv=integration/build-optimized/ppo-ue-aware.csv --enableE2=0 --realtime=0
 ```

@@ -1,19 +1,21 @@
 import tempfile
 import unittest
+import json
+from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from integration.learning.hero_ppo import (
-    ExperimentalRewardConfig, PpoConfig, SliceRatioPPO, Transition,
+    ActionRecord, ExperimentalRewardConfig, PpoConfig, SliceRatioPPO, Transition,
     UeAwareRewardConfig, calculate_experimental_reward,
     calculate_ue_aware_reward, normalized_jain_fairness, validate_ratio_groups,
 )
-from integration.learning.state import (HeroStateBuilder, OBSERVATION_DIM,
+from integration.learning.state import (HeroStateBuilder, LocalObservation, OBSERVATION_DIM,
     UE_AWARE_FEATURES, UE_AWARE_OBSERVATION_DIM, RegionalObservation)
 from integration.learning.tiers import LocalPpoAgent, RegionalPpoAgent
-from integration.learning.runtime_controller import _outcome_terms
+from integration.learning.runtime_controller import RuntimeController, _outcome_terms
 
 
 def transition_batch(agent, count=8):
@@ -170,6 +172,67 @@ class LearningTests(unittest.TestCase):
         self.assertLessEqual(value, 1.0)
         with self.assertRaises(ValueError):
             normalized_jain_fairness([0.5, float("nan")])
+
+    def test_local_episode_rewards_use_real_boundaries_and_max_episode_limit(self):
+        class FakeTrajectory:
+            def __init__(self): self.items = []
+            def append(self, item): self.items.append(item)
+            def __len__(self): return len(self.items)
+            def snapshot(self): return tuple(self.items)
+            def clear(self): self.items.clear()
+
+        class FakePolicy:
+            policy_version = 0
+            def update(self, transitions): return {"actor_loss": 0.0, "critic_loss": 0.0}
+
+        class FakeAgent:
+            def __init__(self): self.trajectory, self.policy = FakeTrajectory(), FakePolicy()
+            def checkpoint(self, path): pass
+
+        with tempfile.TemporaryDirectory() as td:
+            controller = RuntimeController.__new__(RuntimeController)
+            controller.args = SimpleNamespace(mode="train", max_episodes=2,
+                episode_transitions=2, update_every=3, checkpoint_dir=td)
+            controller.formulation = "ue-aware"
+            controller.ue_reward_config = UeAwareRewardConfig()
+            controller.pending_local = {}
+            controller.episode_state = {}
+            controller.local_updates = {}
+            controller._logged_local_schemas = set()
+            controller.experience_file = Path(td) / "episodes.jsonl"
+            controller.transitions = 0
+            agent = FakeAgent()
+            controller._local_agent = lambda node_id: agent
+            applied = [1 / 3, 1 / 3, 1 / 3]
+            slices = {name: {"active_ue_count": 1, "ue_satisfaction": [1.0],
+                "estimated_demand_units": 1.0, "actual_budget_units": 1.0,
+                "actual_mac_used_units": 1.0, "ue_demand_units": [1.0],
+                "qos_satisfaction": 1.0, "worst_ue_satisfaction": 1.0,
+                "satisfied_ue_fraction": 1.0} for name in ("embb", "urllc", "mmtc")}
+            rows = [{"scope": "ue", "slice_id": str(index), "connected_ues": "1",
+                "prbs_per_rbg": "1", "dl_allocated_prb_symbols": "1",
+                "dl_mac_scheduled_tb_bytes": "1", "dl_rx_pdcp_sdu_bytes": "1"}
+                for index in (1, 2, 3)]
+            for step in range(1, 6):
+                obs = LocalObservation(101, step, step - 1, step,
+                    tuple([0.0] * UE_AWARE_OBSERVATION_DIM),
+                    {"applied_ratios": applied, "capacity_units": 3.0, "slices": slices})
+                old = LocalObservation(101, step - 1, step - 2, step - 1,
+                    tuple([0.0] * UE_AWARE_OBSERVATION_DIM))
+                controller.pending_local[101] = (old,
+                    ActionRecord((tuple(applied),), 0.0, 0.0, 0), 0.0, tuple(applied))
+                controller._record_local_transition(101, obs, rows)
+            records = [json.loads(line) for line in controller.experience_file.read_text().splitlines()]
+            episodes = [record for record in records if record["record_type"] == "episode"]
+            transitions = [record for record in records if record["record_type"] == "transition"]
+            self.assertEqual([record["episode_id"] for record in episodes], [1, 2])
+            self.assertEqual([record["episode_steps"] for record in episodes], [2, 2])
+            self.assertTrue(all(abs(record["mean_reward"] - 0.95) < 1e-8 for record in episodes))
+            self.assertTrue(all(record["reward_min"] == -0.05 and record["reward_max"] == 0.95 for record in episodes))
+            self.assertTrue(all(record["simulator_reset"] is False for record in episodes))
+            self.assertEqual(len(transitions), 4, "training stops after the configured maximum episodes")
+            self.assertTrue(transitions[1]["truncated"])
+            self.assertTrue(transitions[3]["truncated"])
 
     def test_bounded_reward_global_and_state_action_bounds(self):
         config = UeAwareRewardConfig()

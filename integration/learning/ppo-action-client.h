@@ -29,6 +29,8 @@ class PpoActionClient {
     std::string experienceFile;
     std::uint32_t maxGnbs{1};
     std::uint32_t updateEvery{8};
+    std::uint32_t maxEpisodes{100};
+    std::uint32_t episodeTransitions{32};
     std::uint32_t seed{1};
     std::uint64_t responseIdleTimeoutMs{30'000};
     std::uint64_t maximumRequestMs{600'000};

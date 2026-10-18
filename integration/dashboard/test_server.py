@@ -105,6 +105,14 @@ class DashboardLaunchTests(unittest.TestCase):
         self.assertTrue(any("ppoTier must be local or regional" in e for e in errors))
         self.assertTrue(any("ppoRewardLatency must be a finite nonnegative" in e for e in errors))
 
+    def test_episode_configuration_requires_positive_limits(self):
+        config = dict(server.DEFAULT)
+        config["ppoMaxEpisodes"] = 0
+        config["ppoEpisodeTransitions"] = 0
+        _, errors = server.clean_config(config)
+        self.assertTrue(any("ppoMaxEpisodes must be an integer" in e for e in errors))
+        self.assertTrue(any("ppoEpisodeTransitions must be an integer" in e for e in errors))
+
     def test_slice_dashboard_uses_native_csv_and_marks_missing_qos_data(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             run_dir = Path(temp_dir)
@@ -132,11 +140,23 @@ class DashboardLaunchTests(unittest.TestCase):
                  "gnb_ids": [101], "policy_version": 0, "reward": 0.4},
                 {"record_type": "transition", "tier": "local", "simulation_time_ns": 1_000_000_000,
                  "gnb_ids": [102], "policy_version": 0, "reward": 0.6},
+                {"record_type": "episode_progress", "tier": "local", "simulation_time_ns": 1_500_000_000,
+                 "gnb_ids": [102], "episode_id": 1, "episode_steps": 1,
+                 "mean_reward": 0.96, "reward_min": -0.05, "reward_max": 0.95,
+                 "reward_gap": -0.01, "bound_utilization": 1.01,
+                 "total_transitions": 1, "optimizer_updates": 0},
                 {"record_type": "update", "tier": "local", "simulation_time_ns": 2_000_000_000,
                  "gnb_ids": [101], "policy_version": 1,
-                 "metrics": {"actor_loss": -0.1, "critic_loss": 0.25}},
+                 "update_count": 1,
+                 "metrics": {"actor_loss": -0.1, "critic_loss": 0.25, "clip_fraction": 0.125}},
                 {"record_type": "transition", "tier": "regional", "simulation_time_ns": 2_000_000_000,
                  "gnb_ids": [101, 102], "policy_version": 1, "reward": 0.8},
+                {"record_type": "episode", "tier": "local", "simulation_time_ns": 2_000_000_000,
+                 "gnb_ids": [101], "episode_id": 1, "episode_steps": 2,
+                 "mean_reward": 0.7, "best_mean_reward": 0.7, "reward_min": -0.05,
+                 "reward_max": 0.95, "bound_utilization": 0.75, "total_transitions": 2,
+                 "optimizer_updates": 1, "simulator_reset": False,
+                 "episode_boundary": "fixed_control_transition_horizon"},
                 {"record_type": "update", "tier": "regional", "simulation_time_ns": 3_000_000_000,
                  "gnb_ids": [101, 102], "policy_version": 2,
                  "metrics": {"actor_loss": 0.05, "critic_loss": 0.12}},
@@ -151,8 +171,21 @@ class DashboardLaunchTests(unittest.TestCase):
             self.assertEqual({x["series"] for x in data["rewards"]},
                              {"gNB 101 · local PPO", "gNB 102 · local PPO",
                               "Near-RT RIC · regional PPO · 101, 102"})
-            self.assertEqual(len(data["errors"]), 4)
+            self.assertEqual(len(data["errors"]), 5)
+            self.assertEqual(len(data["episodes"]), 1)
+            self.assertEqual(data["episodes"][0]["episodeId"], 1)
+            self.assertAlmostEqual(data["episodes"][0]["rewardGap"], 0.25)
+            self.assertFalse(data["episodes"][0]["boundViolation"])
+            self.assertEqual(data["currentEpisodes"][0]["gnbIds"], [102])
+            self.assertTrue(data["currentEpisodes"][0]["boundViolation"],
+                            "dashboard must flag a reward outside the selected episode's bound")
             self.assertIn("critic_loss", {x["metric"] for x in data["errors"]})
+            actor = next(x for x in data["errors"] if x["metric"] == "actor_loss")
+            self.assertEqual(actor["updateId"], 1)
+            self.assertEqual(actor["gnbId"], 101)
+            self.assertEqual(actor["trainingRunId"], run_dir.name)
+            self.assertIn("clip_fraction", {x["metric"] for x in data["errors"]})
+            self.assertEqual(data["episodes"][0]["metric"], "episode_mean_reward")
             self.assertEqual(len(manager.learning()["rewards"]), 3,
                              "subsequent polling must not duplicate already-read JSONL records")
 

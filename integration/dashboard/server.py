@@ -5,6 +5,7 @@ from __future__ import annotations
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import csv
+import hashlib
 import math
 from collections import defaultdict, deque
 from io import StringIO
@@ -42,6 +43,8 @@ DEFAULT = {
     "ppoFormulation": "baseline",
     "ppoMode": "train",
     "ppoUpdateEvery": 8,
+    "ppoMaxEpisodes": 100,
+    "ppoEpisodeTransitions": 32,
     "ppoSeed": 1,
     "ppoRewardThroughput": 1.0,
     "ppoRewardLatency": 0.0,
@@ -163,7 +166,8 @@ def clean_config(raw: object) -> tuple[dict, list[str]]:
         errors.append("UE-aware PPO is gNB-local only; choose the baseline formulation for regional mode.")
     if cfg["ppoMode"] not in ("train", "infer"):
         errors.append("ppoMode must be train or infer.")
-    for key, low, high in (("ppoUpdateEvery", 1, 10000), ("ppoSeed", 1, 0xFFFFFFFF)):
+    for key, low, high in (("ppoUpdateEvery", 1, 10000), ("ppoMaxEpisodes", 1, 1000),
+                           ("ppoEpisodeTransitions", 1, 100000), ("ppoSeed", 1, 0xFFFFFFFF)):
         value = cfg[key]
         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
             errors.append(f"{key} must be an integer from {low} to {high}.")
@@ -467,6 +471,8 @@ class Dashboard:
                               f"--enablePpo={1 if cfg['enablePpo'] else 0}", f"--ppoTier={cfg['ppoTier']}",
                               f"--ppoFormulation={cfg.get('ppoFormulation', 'baseline')}",
                               f"--ppoMode={cfg['ppoMode']}", f"--ppoUpdateEvery={cfg['ppoUpdateEvery']}",
+                              f"--ppoMaxEpisodes={cfg['ppoMaxEpisodes']}",
+                              f"--ppoEpisodeTransitions={cfg['ppoEpisodeTransitions']}",
                               f"--ppoSeed={cfg['ppoSeed']}",
                               f"--ppoRewardThroughput={cfg['ppoRewardThroughput']:g}",
                               f"--ppoRewardLatency={cfg['ppoRewardLatency']:g}",
@@ -652,33 +658,65 @@ class Dashboard:
                                for t, value in samples)
             return {"metrics": selected, "series": results, "message": "" if results else "No samples for this scope and selection yet."}
 
-    def learning(self) -> dict:
+    def learning_runs(self) -> dict:
+        root = BUILD / "dashboard-runs"
+        runs = []
+        if root.is_dir():
+            for directory in sorted(root.iterdir(), key=lambda item: item.name, reverse=True):
+                if (directory.is_dir() and re.fullmatch(r"[0-9]{8}-[0-9]{6}-[0-9]+", directory.name)
+                        and (directory / "ppo-transitions.jsonl").is_file()):
+                    runs.append({"id": directory.name, "label": directory.name})
+        return {"runs": runs}
+
+    def learning(self, run_id: str | None = None) -> dict:
         """Return actual PPO rewards and optimizer metrics appended by the live controller."""
         with LOCK:
-            if not self.applied:
-                return {"enabled": False, "rewards": [], "errors": [],
-                        "components": [], "actions": [],
-                        "message": "Launch a run with slice enforcement and PPO enabled."}
-            values = self.applied.get("values", {})
-            if not values.get("enablePpo"):
+            valid_runs = {item["id"] for item in self.learning_runs()["runs"]}
+            current_run = (Path(self.applied["runDirectory"]).name
+                           if self.applied and self.applied.get("runDirectory") else None)
+            is_current = bool(self.applied and (run_id is None or run_id == current_run))
+            values = self.applied.get("values", {}) if is_current else {}
+            if is_current and not values.get("enablePpo"):
                 return {"enabled": False, "rewards": [], "errors": [],
                         "components": [], "actions": [],
                         "message": "PPO learning is disabled for this run."}
-            if values.get("ppoMode") != "train":
+            if is_current and values.get("ppoMode") == "infer":
                 return {"enabled": True, "tier": values.get("ppoTier"), "mode": "infer",
                         "rewards": [], "errors": [], "components": [], "actions": [],
                         "message": "Inference applies policy actions but does not calculate training rewards or PPO update losses."}
-            run_dir = Path(self.applied["runDirectory"])
+            if is_current and current_run:
+                current_path = Path(self.applied["runDirectory"]) / "ppo-transitions.jsonl"
+                if current_path.is_file():
+                    valid_runs.add(current_run)
+            selected_run = run_id or current_run
+            if selected_run is not None and selected_run not in valid_runs:
+                return {"enabled": False, "episodes": [], "rewards": [], "errors": [],
+                        "components": [], "actions": [], "message": "Selected PPO training run is unavailable."}
+            if not selected_run:
+                return {"enabled": False, "rewards": [], "errors": [],
+                        "components": [], "actions": [],
+                        "message": "Launch a run with slice enforcement and PPO enabled."}
+            run_dir = (Path(self.applied["runDirectory"]) if is_current and current_run == selected_run
+                       else BUILD / "dashboard-runs" / selected_run)
+            reward_config = {key: values[key] for key in (
+                "ppoFormulation", "ppoRewardQuality", "ppoRewardAdequacy",
+                "ppoRewardUsefulEfficiency", "ppoRewardFairness",
+                "ppoRewardActionStability", "ppoRewardThroughput",
+                "ppoRewardLatency", "ppoRewardSla", "ppoRewardControlCost") if key in values}
+            reward_config_version = (hashlib.sha256(json.dumps(reward_config, sort_keys=True).encode()).hexdigest()[:12]
+                                     if reward_config else None)
             path = run_dir / "ppo-transitions.jsonl"
             if not path.is_file():
                 return {"enabled": True, "tier": values.get("ppoTier"), "mode": "train",
-                        "rewards": [], "errors": [], "components": [], "actions": [],
+                        "episodes": [], "rewards": [], "errors": [], "components": [], "actions": [],
                         "message": "Waiting for the first completed measurement window and PPO transition."}
             key = str(path)
             state = self.learning_cache.get(key)
             if state is None or path.stat().st_size < state["offset"]:
                 state = {"offset": 0, "pending": "", "rewards": deque(maxlen=300),
-                         "errors": deque(maxlen=300), "components": deque(maxlen=1200),
+                         "episodes": deque(maxlen=15000), "current_episodes": {},
+                         "optimizer_updates": {},
+                         "errors": deque(maxlen=15000), "components": deque(maxlen=1200),
                          "actions": deque(maxlen=1200), "seen": 0}
                 self.learning_cache[key] = state
             with path.open("rb") as stream:
@@ -701,7 +739,46 @@ class Dashboard:
                         version = int(record.get("policy_version", 0))
                         if tier not in ("local", "regional") or not math.isfinite(sim_time):
                             continue
-                        if record.get("record_type") == "transition" and isinstance(record.get("reward"), (int, float)):
+                        if record.get("record_type") in ("episode", "episode_progress") and tier == "local":
+                            mean_reward = float(record["mean_reward"])
+                            episode_id = int(record["episode_id"])
+                            if episode_id < 1 or not math.isfinite(mean_reward) or int(record.get("episode_steps", 0)) < 1:
+                                raise ValueError("invalid episode record")
+                            lower, upper = record.get("reward_min"), record.get("reward_max")
+                            has_bounds = isinstance(lower, (int, float)) and isinstance(upper, (int, float))
+                            violation = bool(has_bounds and (mean_reward < float(lower) - 1e-8 or mean_reward > float(upper) + 1e-8))
+                            episode_item = {
+                                "episodeId": episode_id, "gnbIds": node_ids,
+                                "gnbId": node_ids[0] if len(node_ids) == 1 else None,
+                                "metric": "episode_mean_reward",
+                                "series": f"gNB {node_ids[0]}" if node_ids else "gNB",
+                                "meanReward": mean_reward,
+                                "bestMeanReward": (float(record["best_mean_reward"])
+                                    if isinstance(record.get("best_mean_reward"), (int, float)) and
+                                    math.isfinite(float(record["best_mean_reward"])) else None),
+                                "rewardMin": float(lower) if has_bounds else None,
+                                "rewardMax": float(upper) if has_bounds else None,
+                                "rewardGap": float(upper) - mean_reward if has_bounds else None,
+                                "boundUtilization": float(record["bound_utilization"]) if isinstance(record.get("bound_utilization"), (int, float)) else None,
+                                "episodeSteps": int(record["episode_steps"]),
+                                "totalTransitions": int(record.get("total_transitions", 0)),
+                                "optimizerUpdates": int(record.get("optimizer_updates", 0)),
+                                "simulationTime": sim_time,
+                                "timestamp": sim_time, "trainingRunId": selected_run,
+                                "rewardConfigurationVersion": record.get("reward_configuration_version", reward_config_version),
+                                "boundViolation": violation,
+                                "simulatorReset": bool(record.get("simulator_reset", False)),
+                                "inProgress": record.get("record_type") == "episode_progress",
+                                "boundary": record.get("episode_boundary", "fixed_control_transition_horizon"),
+                            }
+                            if episode_item["inProgress"]:
+                                for node in node_ids:
+                                    state["current_episodes"][node] = episode_item
+                            else:
+                                state["episodes"].append(episode_item)
+                                for node in node_ids:
+                                    state["current_episodes"].pop(node, None)
+                        elif record.get("record_type") == "transition" and isinstance(record.get("reward"), (int, float)):
                             reward = float(record["reward"])
                             if not math.isfinite(reward):
                                 continue
@@ -709,7 +786,11 @@ class Dashboard:
                                 for node in node_ids:
                                     state["rewards"].append({"series": f"gNB {node} · local PPO",
                                                               "gnbIds": [node], "t": sim_time,
-                                                              "value": reward, "policyVersion": version})
+                                                              "value": reward, "policyVersion": version,
+                                                              "trainingRunId": selected_run, "gnbId": node,
+                                                              "metric": "transition_reward",
+                                                              "timestamp": sim_time,
+                                                              "rewardConfigurationVersion": record.get("reward_configuration_version", reward_config_version)})
                                     if record.get("formulation") == "ue-aware":
                                         for name, value in record.get("reward_terms", {}).items():
                                             if name in ("Q", "A", "E", "F", "H") and isinstance(value, (int, float)) and math.isfinite(float(value)):
@@ -747,17 +828,31 @@ class Dashboard:
                         elif record.get("record_type") == "update" and isinstance(record.get("metrics"), dict):
                             label = (f"gNB {node_ids[0]} · local PPO" if tier == "local" and node_ids
                                      else "Near-RT RIC · regional PPO")
-                            for metric in ("actor_loss", "critic_loss", "entropy", "approx_kl", "gradient_norm"):
+                            if tier == "local" and node_ids:
+                                state["optimizer_updates"][node_ids[0]] = int(
+                                    record.get("update_count", record.get("policy_version", 0)))
+                            update_id = int(record.get("update_count", version))
+                            for metric in ("actor_loss", "critic_loss", "total_loss", "value_prediction_error",
+                                           "entropy", "approx_kl", "clip_fraction", "gradient_norm"):
                                 value = record["metrics"].get(metric)
                                 if isinstance(value, (int, float)) and math.isfinite(float(value)):
                                     state["errors"].append({"series": label, "metric": metric,
                                                             "gnbIds": node_ids, "t": sim_time,
                                                             "value": float(value),
-                                                            "policyVersion": version})
+                                                            "gnbId": node_ids[0] if len(node_ids) == 1 else None,
+                                                            "metricName": metric,
+                                                            "policyVersion": version, "updateId": update_id,
+                                                            "trainingRunId": selected_run,
+                                                            "timestamp": sim_time,
+                                                            "rewardConfigurationVersion": record.get("reward_configuration_version", reward_config_version)})
                         state["seen"] += 1
                     except (ValueError, TypeError, json.JSONDecodeError):
                         continue
-            return {"enabled": True, "tier": values.get("ppoTier"), "mode": "train",
+            return {"enabled": True, "tier": values.get("ppoTier", "local"), "mode": "train",
+                    "trainingRun": selected_run, "rewardConfigurationVersion": reward_config_version,
+                    "episodes": list(state["episodes"]),
+                    "currentEpisodes": list(state["current_episodes"].values()),
+                    "optimizerUpdatesByGnb": state["optimizer_updates"],
                     "rewards": list(state["rewards"]), "errors": list(state["errors"]),
                     "components": list(state["components"]), "actions": list(state["actions"]),
                     "records": state["seen"],
@@ -868,7 +963,10 @@ class Handler(BaseHTTPRequestHandler):
                                   "wireKpm": key in ("dl_throughput", "ul_throughput")} for key, value in METRICS.items()]
             self.send_json(data)
         elif parsed.path == "/api/learning":
-            self.send_json(MANAGER.learning())
+            from urllib.parse import parse_qs
+            self.send_json(MANAGER.learning(parse_qs(parsed.query).get("run", [None])[0]))
+        elif parsed.path == "/api/learning-runs":
+            self.send_json(MANAGER.learning_runs())
         elif parsed.path == "/api/slices":
             self.send_json(MANAGER.slices())
         elif parsed.path == "/api/profiles":

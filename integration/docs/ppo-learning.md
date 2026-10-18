@@ -41,7 +41,7 @@ integration/build/native-measurements \
   --gnbs=1 --ues=3 --duration=8 --sampleMs=200 \
   --sliceAssignment=explicit --embbUes=1 --urllcUes=1 --mmtcUes=1 \
   --enableSliceEnforcement=1 --enablePpo=1 --ppoTier=local --ppoMode=train \
-  --ppoUpdateEvery=8 --ppoSeed=1 \
+  --ppoUpdateEvery=8 --ppoMaxEpisodes=100 --ppoEpisodeTransitions=32 --ppoSeed=1 \
   --ppoCheckpointDir=integration/build/ppo-checkpoints/local \
   --csv=integration/build/ppo-training.csv --enableE2=0 --realtime=0
 ```
@@ -59,7 +59,7 @@ integration/build/native-measurements \
   --csv=integration/build/ppo-inference.csv --enableE2=0 --realtime=0
 ```
 
-The dashboard exposes the PPO toggle, local/regional tier, train/infer mode, rollout size, seed, and configurable experimental reward weights. In a training run, its Live PPO learning results pane reads the run's transition JSONL incrementally and plots the actual experimental reward for every local gNB policy, or the aggregated reward for the regional Near-RT RIC policy. After each PPO rollout update it also plots the actual actor loss and critic value-regression loss per local gNB or for the regional policy. These curves are tagged with policy tier and plotted against simulation time. Inference profiles are rejected unless matching checkpoints exist; inference applies actions but does not generate training reward/loss events. Dashboard profiles continue to save the configuration, and applied commands and PPO actions appear in the simulation log.
+The dashboard exposes the PPO toggle, local/regional tier, train/infer mode, rollout size, seed, configurable reward weights, and local training episode limits. A local episode is explicitly defined as `ppoEpisodeTransitions` completed action-aligned windows; it is independent of `ppoUpdateEvery`. Since this native scenario has no reset API, episode boundaries preserve the continuing simulation and mark the final transition as truncated for bootstrapped GAE. After `ppoMaxEpisodes`, each local policy is frozen while the simulation continues. The pane plots the actual mean reward per transition against episode number, raw and smoothed gNB curves, and the recorded theoretical reward bounds for UE-aware local training. It shows current and best completed episode rewards, reward gap, environment transitions, and optimizer update count. Run and gNB filters are available. PPO losses remain separate optimizer diagnostics and are never interpreted as episodes. Regional PPO has a joint reward and does not claim per-gNB episode reward. Inference profiles are rejected unless matching checkpoints exist; inference applies actions but does not generate training reward/loss events. Dashboard profiles continue to save the training limits, and applied commands and PPO actions appear in the simulation log.
 
 ## Reward and observation limits
 

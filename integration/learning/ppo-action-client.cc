@@ -113,6 +113,8 @@ void PpoActionClient::Start() {
     if (::chdir(m_config.repositoryRoot.c_str()) != 0) _exit(126);
     const std::string maxGnbs = std::to_string(m_config.maxGnbs);
     const std::string updateEvery = std::to_string(m_config.updateEvery);
+    const std::string maxEpisodes = std::to_string(m_config.maxEpisodes);
+    const std::string episodeTransitions = std::to_string(m_config.episodeTransitions);
     const std::string seed = std::to_string(m_config.seed);
     const std::string experienceFile = m_config.experienceFile;
     const std::string throughput = std::to_string(m_config.throughputWeight);
@@ -130,7 +132,9 @@ void PpoActionClient::Start() {
              "--formulation", m_config.formulation.c_str(),
              "--checkpoint-dir", m_config.checkpointDirectory.c_str(),
              "--experience-file", experienceFile.c_str(),
-             "--max-gnbs", maxGnbs.c_str(), "--update-every", updateEvery.c_str(), "--seed", seed.c_str(),
+             "--max-gnbs", maxGnbs.c_str(), "--update-every", updateEvery.c_str(),
+             "--max-episodes", maxEpisodes.c_str(), "--episode-transitions", episodeTransitions.c_str(),
+             "--seed", seed.c_str(),
              "--reward-throughput", throughput.c_str(), "--reward-latency", latency.c_str(),
              "--reward-reliability", reliability.c_str(), "--reward-sla", sla.c_str(),
              "--reward-control-cost", controlCost.c_str(),

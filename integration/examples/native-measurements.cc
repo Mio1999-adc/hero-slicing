@@ -81,7 +81,7 @@ int main(int argc,char **argv) {
   double embbRatio=0.34, urllcRatio=0.33, mmtcRatio=0.33;
   bool enablePpo=false;
   std::string ppoTier="local",ppoMode="train",ppoFormulation="baseline",ppoCheckpointDir="integration/build/ppo-checkpoints",ppoExperienceFile="";
-  std::uint32_t ppoUpdateEvery=8,ppoSeed=1;
+  std::uint32_t ppoUpdateEvery=8,ppoMaxEpisodes=100,ppoEpisodeTransitions=32,ppoSeed=1;
   double ppoRewardThroughput=1.0,ppoRewardLatency=0.0,ppoRewardReliability=0.0,ppoRewardSla=0.0,ppoRewardControlCost=0.0;
   double ppoRewardQuality=0.50,ppoRewardAdequacy=0.20,ppoRewardUsefulEfficiency=0.15,ppoRewardFairness=0.10,ppoRewardActionStability=0.05;
   double embbProbability=0.4,urllcProbability=0.3,mmtcProbability=0.3;
@@ -108,6 +108,8 @@ int main(int argc,char **argv) {
   cmd.AddValue("ppoCheckpointDir","PPO checkpoint output/input directory",ppoCheckpointDir);
   cmd.AddValue("ppoExperienceFile","JSONL path for actual PPO state/action/reward transitions (empty uses checkpoint directory)",ppoExperienceFile);
   cmd.AddValue("ppoUpdateEvery","Online PPO transitions per policy update",ppoUpdateEvery);
+  cmd.AddValue("ppoMaxEpisodes","Maximum local PPO training episodes per gNB (training stops after this many episodes)",ppoMaxEpisodes);
+  cmd.AddValue("ppoEpisodeTransitions","Measured control transitions per learning episode; no ns-3 reset is performed",ppoEpisodeTransitions);
   cmd.AddValue("ppoSeed","PPO initialization seed",ppoSeed);
   cmd.AddValue("ppoRewardThroughput","Experimental throughput reward weight",ppoRewardThroughput);
   cmd.AddValue("ppoRewardLatency","Experimental delay reward weight",ppoRewardLatency);
@@ -159,7 +161,7 @@ int main(int argc,char **argv) {
   const bool boundedWeightsValid=std::all_of(boundedRewardWeights.begin(),boundedRewardWeights.end(),[](double weight){return std::isfinite(weight)&&weight>=0;})&&
       std::abs(std::accumulate(boundedRewardWeights.begin(),boundedRewardWeights.end(),0.0)-1.0)<=1e-9;
   if(enablePpo && (!enableSliceEnforcement || !collect || (ppoTier!="local"&&ppoTier!="regional") ||
-      (ppoMode!="train"&&ppoMode!="infer") || !ppoUpdateEvery || !ppoSeed ||
+      (ppoMode!="train"&&ppoMode!="infer") || !ppoUpdateEvery || !ppoMaxEpisodes || !ppoEpisodeTransitions || !ppoSeed ||
       (ppoTier=="regional"&&gnbCount>15) || !ppoWeightsValid ||
       (ppoFormulation!="baseline"&&ppoFormulation!="ue-aware") ||
       (ppoTier=="regional"&&ppoFormulation!="baseline") ||
@@ -411,6 +413,7 @@ int main(int argc,char **argv) {
         config.tier=ppoTier; config.mode=ppoMode; config.formulation=ppoFormulation; config.checkpointDirectory=ppoCheckpointDir;
         config.experienceFile=ppoExperienceFile;
         config.maxGnbs=gnbCount; config.updateEvery=ppoUpdateEvery; config.seed=ppoSeed;
+        config.maxEpisodes=ppoMaxEpisodes; config.episodeTransitions=ppoEpisodeTransitions;
         config.throughputWeight=ppoRewardThroughput; config.latencyWeight=ppoRewardLatency;
         config.reliabilityWeight=ppoRewardReliability; config.slaWeight=ppoRewardSla;
         config.controlCostWeight=ppoRewardControlCost;
@@ -423,6 +426,7 @@ int main(int argc,char **argv) {
         ppoClient->Start();
         std::cout<<"[HERO PPO] controller=ready tier="<<ppoTier<<" mode="<<ppoMode
                  <<" formulation="<<ppoFormulation<<" policy=Dirichlet-simplex updates_every="<<ppoUpdateEvery
+                 <<" max_episodes="<<ppoMaxEpisodes<<" episode_transitions="<<ppoEpisodeTransitions
                  <<(ppoFormulation=="ue-aware" ? " reward=bounded-QAEFH weights=" : " reward=baseline-experimental throughput:");
         if(ppoFormulation=="ue-aware")
           std::cout<<"Q:"<<ppoRewardQuality<<",A:"<<ppoRewardAdequacy<<",E:"<<ppoRewardUsefulEfficiency

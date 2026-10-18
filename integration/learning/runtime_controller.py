@@ -250,6 +250,8 @@ class RuntimeController:
         self.steps = 0
         self.transitions = 0
         self._logged_local_schemas: set[int] = set()
+        self.episode_state: dict[int, dict[str, float | int]] = {}
+        self.local_updates: dict[int, int] = {}
 
     def _local_agent(self, node_id: int) -> LocalPpoAgent:
         if node_id not in self.local_agents:
@@ -282,10 +284,41 @@ class RuntimeController:
     def _reward(self, rows: Sequence[Sequence[dict[str, str]]], cost: float) -> float:
         return calculate_experimental_reward(self._reward_terms(rows, cost), self.reward_config)
 
+    def _update_local_policy(self, node_id: int, agent: LocalPpoAgent,
+                             simulation_time_ns: int) -> None:
+        if not len(agent.trajectory):
+            return
+        update_started = time.perf_counter()
+        metrics = agent.policy.update(agent.trajectory.snapshot())
+        update_duration_ms = (time.perf_counter() - update_started) * 1000.0
+        agent.trajectory.clear()
+        prefix = "local-ue-aware" if self.formulation == "ue-aware" else "local"
+        path = Path(self.args.checkpoint_dir) / f"{prefix}-gnb-{node_id}.pt"
+        agent.checkpoint(path)
+        self.local_updates[node_id] = self.local_updates.get(node_id, 0) + 1
+        append_jsonl(self.experience_file, {
+            "record_type": "update", "tier": "local",
+            "simulation_time_ns": simulation_time_ns,
+            "gnb_ids": [node_id], "policy_version": agent.policy.policy_version,
+            "update_count": self.local_updates[node_id],
+            "metrics": metrics, "update_duration_ms": update_duration_ms,
+        })
+        print(f"[HERO PPO] tier=local gnb_id={node_id} update={agent.policy.policy_version} transitions={self.transitions} update_duration_ms={update_duration_ms:.3f} metrics={metrics}", file=sys.stderr, flush=True)
+
     def _record_local_transition(self, node_id: int, observation: LocalObservation,
                                  rows: Sequence[dict[str, str]]) -> None:
         pending = self.pending_local.get(node_id)
         if pending is None or self.args.mode != "train":
+            return
+        episode = self.episode_state.setdefault(node_id, {
+            "episode_id": 1, "steps": 0, "reward_sum": 0.0,
+            "best_mean_reward": -math.inf, "episodes_completed": 0,
+            "total_transitions": 0,
+        })
+        max_episodes = int(getattr(self.args, "max_episodes", 100))
+        episode_transitions = int(getattr(self.args, "episode_transitions", 32))
+        if episode["episodes_completed"] >= max_episodes:
+            self.pending_local.pop(node_id, None)
             return
         old_observation, action, cost, _old_ratios = pending
         reward_details = None
@@ -297,9 +330,17 @@ class RuntimeController:
         else:
             terms = self._reward_terms([rows], cost)
             reward = calculate_experimental_reward(terms, self.reward_config)
+        episode_id = int(episode["episode_id"])
+        episode_step = int(episode["steps"]) + 1
+        episode_end = episode_step >= episode_transitions
+        if reward_details:
+            minimum, maximum = reward_details["global_lower_bound"], reward_details["global_upper_bound"]
+            tolerance = 1e-8
+            if reward < minimum - tolerance or reward > maximum + tolerance:
+                raise ValueError(f"reward bound violation for gNB {node_id}: {reward} not in [{minimum}, {maximum}]")
         transition = Transition(old_observation.values, action.ratios,
                                 action.log_probability, reward, observation.values,
-                                False, False, observation.end_sim_ns,
+                                False, episode_end, observation.end_sim_ns,
                                 action.policy_version, (node_id,))
         agent = self._local_agent(node_id)
         agent.trajectory.append(transition)
@@ -308,6 +349,9 @@ class RuntimeController:
             "tier": "local", "observation_sequence": old_observation.sequence,
             "outcome_sequence": observation.sequence, "simulation_time_ns": observation.end_sim_ns,
             "gnb_ids": [node_id], "policy_version": action.policy_version,
+            "episode_id": episode_id, "episode_step": episode_step,
+            "episode_boundary": episode_end,
+            "truncated": episode_end,
             "observation": old_observation.values, "action_ratios": action.ratios,
             "next_observation": observation.values, "reward_terms": terms,
             "reward": reward, "experimental_reward": True,
@@ -334,21 +378,64 @@ class RuntimeController:
             self._logged_local_schemas.add(node_id)
         append_jsonl(self.experience_file, transition_record)
         self.transitions += 1
-        if len(agent.trajectory) >= self.args.update_every:
-            update_started = time.perf_counter()
-            metrics = agent.policy.update(agent.trajectory.snapshot())
-            update_duration_ms = (time.perf_counter() - update_started) * 1000.0
-            agent.trajectory.clear()
-            prefix = "local-ue-aware" if self.formulation == "ue-aware" else "local"
-            path = Path(self.args.checkpoint_dir) / f"{prefix}-gnb-{node_id}.pt"
-            agent.checkpoint(path)
+        episode["steps"] = episode_step
+        episode["reward_sum"] = float(episode["reward_sum"]) + reward
+        episode["total_transitions"] = int(episode["total_transitions"]) + 1
+        if episode_end:
+            mean_reward = float(episode["reward_sum"]) / episode_step
+            if reward_details:
+                lower = -self.ue_reward_config.action_stability
+                upper = 1.0 - self.ue_reward_config.action_stability
+                if mean_reward < lower - 1e-8 or mean_reward > upper + 1e-8:
+                    raise ValueError(f"episode reward bound violation for gNB {node_id}: {mean_reward} not in [{lower}, {upper}]")
+                reward_gap = upper - mean_reward
+                bound_utilization = (mean_reward - lower) / (upper - lower)
+            else:
+                lower = upper = reward_gap = bound_utilization = None
+            episode["best_mean_reward"] = max(float(episode["best_mean_reward"]), mean_reward)
+            episode["episodes_completed"] = int(episode["episodes_completed"]) + 1
             append_jsonl(self.experience_file, {
-                "record_type": "update", "tier": "local",
-                "simulation_time_ns": transition.simulation_time_ns,
-                "gnb_ids": [node_id], "policy_version": agent.policy.policy_version,
-                "metrics": metrics, "update_duration_ms": update_duration_ms,
+                "record_type": "episode", "tier": "local", "gnb_ids": [node_id],
+                "episode_id": episode_id, "episode_steps": episode_step,
+                "simulation_time_ns": observation.end_sim_ns,
+                "mean_reward": mean_reward, "best_mean_reward": episode["best_mean_reward"],
+                "reward_min": lower, "reward_max": upper, "reward_gap": reward_gap,
+                "bound_utilization": bound_utilization,
+                "total_transitions": episode["total_transitions"],
+                "optimizer_updates": self.local_updates.get(node_id, 0),
+                "episode_boundary": "fixed_control_transition_horizon",
+                "simulator_reset": False,
             })
-            print(f"[HERO PPO] tier=local gnb_id={node_id} update={agent.policy.policy_version} transitions={self.transitions} update_duration_ms={update_duration_ms:.3f} metrics={metrics}", file=sys.stderr, flush=True)
+            episode["episode_id"] = episode_id + 1
+            episode["steps"] = 0
+            episode["reward_sum"] = 0.0
+        else:
+            if reward_details:
+                progress_min = -self.ue_reward_config.action_stability
+                progress_max = 1.0 - self.ue_reward_config.action_stability
+                progress_gap = progress_max - float(episode["reward_sum"]) / episode_step
+            else:
+                progress_min = progress_max = progress_gap = None
+            append_jsonl(self.experience_file, {
+                "record_type": "episode_progress", "tier": "local", "gnb_ids": [node_id],
+                "episode_id": episode_id, "episode_steps": episode_step,
+                "simulation_time_ns": observation.end_sim_ns,
+                "mean_reward": float(episode["reward_sum"]) / episode_step,
+                "best_mean_reward": (float(episode["best_mean_reward"])
+                                      if math.isfinite(float(episode["best_mean_reward"])) else None),
+                "reward_min": progress_min, "reward_max": progress_max,
+                "reward_gap": progress_gap,
+                "bound_utilization": ((float(episode["reward_sum"]) / episode_step - progress_min) /
+                                      (progress_max - progress_min)
+                                      if progress_min is not None and progress_max is not None else None),
+                "total_transitions": episode["total_transitions"],
+                "optimizer_updates": self.local_updates.get(node_id, 0),
+                "simulator_reset": False,
+            })
+        if len(agent.trajectory) >= self.args.update_every or (episode_end and int(episode["episodes_completed"]) >= max_episodes):
+            self._update_local_policy(node_id, agent, transition.simulation_time_ns)
+        if episode_end and int(episode["episodes_completed"]) >= max_episodes:
+            print(f"[HERO PPO] tier=local gnb_id={node_id} training_complete episodes={max_episodes}; policy frozen for remaining simulation", file=sys.stderr, flush=True)
         self.pending_local.pop(node_id, None)
 
     def _record_regional_transition(self, observation: RegionalObservation,
@@ -540,6 +627,8 @@ def main() -> int:
     parser.add_argument("--experience-file", default="")
     parser.add_argument("--max-gnbs", type=int, required=True)
     parser.add_argument("--update-every", type=int, default=8)
+    parser.add_argument("--max-episodes", type=int, default=100)
+    parser.add_argument("--episode-transitions", type=int, default=32)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--reward-throughput", type=float, default=1.0)
     parser.add_argument("--reward-latency", type=float, default=0.0)
@@ -552,8 +641,8 @@ def main() -> int:
     parser.add_argument("--reward-fairness", type=float, default=0.10)
     parser.add_argument("--reward-action-stability", type=float, default=0.05)
     args = parser.parse_args()
-    if args.max_gnbs < 1 or args.update_every < 1:
-        parser.error("max-gnbs and update-every must be positive")
+    if args.max_gnbs < 1 or args.update_every < 1 or args.max_episodes < 1 or args.episode_transitions < 1:
+        parser.error("max-gnbs, update-every, max-episodes, and episode-transitions must be positive")
     controller = RuntimeController(args)
     return serve_controller(controller)
 
