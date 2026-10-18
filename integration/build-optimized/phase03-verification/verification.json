@@ -1,0 +1,16 @@
+{
+  "result": "PASS",
+  "default_windows": 20,
+  "default_csv_rows": 80,
+  "ues": 3,
+  "dl_udp_delivered": 300,
+  "ul_udp_delivered": 240,
+  "dl_pdcp_delivered_sdu_bytes": 162000,
+  "ul_pdcp_delivered_sdu_bytes": 68160,
+  "dl_allocated_prb_grant_sum": 33390,
+  "ul_allocated_prb_grant_sum": 25440,
+  "csv_sha256": "8d78fb76e26ede334f3b03c12a4bea528bc95827468154206a149e2f7a408ac0",
+  "byte_identical_repeat": true,
+  "observer_disabled_delivery_unchanged": true,
+  "partial_final_window_ns": 82000000
+}

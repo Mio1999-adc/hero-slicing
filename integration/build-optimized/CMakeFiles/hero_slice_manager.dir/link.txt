@@ -1,0 +1,2 @@
+/usr/bin/ar qc libhero_slice_manager.a "CMakeFiles/hero_slice_manager.dir/slicing/slice-budget-manager.cc.o" "CMakeFiles/hero_slice_manager.dir/slicing/nr-mac-scheduler-hero-slice-pf.cc.o"
+/usr/bin/ranlib libhero_slice_manager.a

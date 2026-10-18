@@ -1,0 +1,14 @@
+{
+  "name": "Two gNB demo",
+  "gnbs": 2,
+  "ues": 4,
+  "gnbSpacingM": 500.0,
+  "ueDistanceM": 20.0,
+  "sampleMs": 1000,
+  "duration": 8.0,
+  "ricIp": "127.0.0.1",
+  "connectRic": true,
+  "kpmMonitor": true,
+  "enableControl": true,
+  "csv": "dashboard-measurements.csv"
+}

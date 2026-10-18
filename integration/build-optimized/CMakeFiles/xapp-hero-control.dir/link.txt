@@ -1,0 +1,1 @@
+/usr/bin/cc "CMakeFiles/xapp-hero-control.dir/examples/xapp-hero-control.c.o" -o xapp-hero-control  /home/hpclab-lananh/HERO-slicing/platforms/flexric/build/src/xApp/libe42_xapp.a /usr/lib/x86_64-linux-gnu/libsctp.so -ldl -lm /home/hpclab-lananh/HERO-slicing/platforms/flexric/build/examples/xApp/c/monitor/RRC_MESSAGES/libasn1_nr_rrc.a 

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libhero_oran_interfaces.a "CMakeFiles/hero_oran_interfaces.dir/lena-adapter/lena-gnb-adapter.cc.o"
+/usr/bin/ranlib libhero_oran_interfaces.a

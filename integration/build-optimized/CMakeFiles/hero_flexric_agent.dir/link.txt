@@ -1,0 +1,2 @@
+/usr/bin/ar qc libhero_flexric_agent.a "CMakeFiles/hero_flexric_agent.dir/e2-agent/flexric-agent.c.o" "CMakeFiles/hero_flexric_agent.dir/e2-agent/flexric-e2-agent.cc.o"
+/usr/bin/ranlib libhero_flexric_agent.a

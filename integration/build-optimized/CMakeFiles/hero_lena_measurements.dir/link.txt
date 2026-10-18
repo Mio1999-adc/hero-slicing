@@ -1,0 +1,2 @@
+/usr/bin/ar qc libhero_lena_measurements.a "CMakeFiles/hero_lena_measurements.dir/kpm/lena-measurement-provider.cc.o" "CMakeFiles/hero_lena_measurements.dir/kpm/measurement-csv.cc.o"
+/usr/bin/ranlib libhero_lena_measurements.a

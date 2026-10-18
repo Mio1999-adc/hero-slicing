@@ -1,0 +1,17 @@
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/hero_oran_interfaces.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/compilation-smoke.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/hero_flexric_agent.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/single-gnb-e2.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/e2-identity-registration.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/kpm-subscription-compatibility.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/e2-network-lifecycle.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/hero_lena_measurements.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/hero_slice_manager.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/native-measurements.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/xapp-hero-control.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/private-rc-validation.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/ppo-action-client-test.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/slice-budget-manager-test.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/test.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/edit_cache.dir
+/home/hpclab-lananh/HERO-slicing/integration/build-optimized/CMakeFiles/rebuild_cache.dir

@@ -1,0 +1,22 @@
+compilation-smoke 5 0.00527569
+e2-identity-registration 5 0.000282403
+kpm-subscription-compatibility 5 0.000201173
+native-radio-only 5 0.0499362
+native-measurements 5 0.150722
+native-multignb-measurements 5 0.409114
+native-three-gnb-radio 5 0.439211
+verify-native-measurements 5 0.610017
+private-rc-validation 5 0.00339324
+dashboard-config-validation 10 0.00462101
+dashboard-measurement-mapping 5 0.00974904
+slice-budget-manager-unit 6 0.000254808
+ppo-runtime-ipc 9 0.150564
+ppo-action-client-ipc-stress 7 0.617041
+native-live-ppo-budget 13 0.732237
+ppo-learning-unit 5 0.456957
+dashboard-server-behavior 6 0.0135244
+native-three-slice-ue-profiles 2 0.323781
+native-random-slice-assignment 2 0.277384
+native-slice-budget-enforcement 2 1.2867
+native-multignb-slice-budget 2 1.64504
+---

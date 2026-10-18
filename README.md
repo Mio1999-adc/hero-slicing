@@ -1,8 +1,9 @@
 # HERO-Slicing
 
 Hierarchical, PHY-aware RL/FL framework for UE-aware RAN slicing in Open RAN.
-This README starts with installing the platform it runs on (asn1c, FlexRIC, ns-O-RAN).
-Project overview and the Python quick start are at the end.
+The repository includes an independent integration layer under `integration/` for the
+installed native ns-3/5G-LENA and original FlexRIC trees. This README records the
+current integration state and the opt-in LENA-side slice-enforcement and PPO extension.
 
 ## 1. Versions and original repositories
 
@@ -153,58 +154,109 @@ A full ns-3 build is long (hours on a single core). `./ns3 build core`,
 
 ---
 
-## 5. Project overview
+## 5. Native LENA slicing: current state and extension boundary
 
+### Existing platform
+
+The working integration is the independent code in [`integration/`](integration/README.md),
+which uses the installed native ns-3/5G-LENA and original FlexRIC sources under the ignored
+`platforms/` directory. It provides native radio scenarios, per-gNB/UE measurements,
+E2 Setup, the currently supported KPM v3 reporting path, a private `MaxDlMcs` control
+extension, and a dashboard. The dashboard's verified baseline radio profile is one BWP.
+See [Phase 08 configuration and validation](integration/docs/phase08-configuration-manager.md)
+for the exact settings and runtime limitations.
+
+The native scenario now supports opt-in explicit or seeded-random UE associations to
+eMBB, URLLC, and mMTC, per-slice UDP traffic profiles, supported dedicated EPS bearers,
+and slice/QoS metadata in native UE measurement rows. The baseline remains the default.
+These UE labels and bearers do **not** enforce slice resource budgets: the installed
+native MAC scheduler remains the default. When opt-in slice enforcement is selected,
+each gNB owns a `SliceBudgetManager` and an OFDMA PF-derived scheduler applies per-slice
+RBG-symbol upper caps. Optional live local or regional PPO consumes actual native
+measurement windows and updates those per-gNB budgets on the ns-3 event thread. The
+existing private `MaxDlMcs` operation is not a slice-budget API. The dashboard shows UE
+slice assignments and measured throughput; application delay and reliability
+satisfaction remain unavailable.
+See [slice UE and traffic profiles](integration/docs/slice-ue-traffic.md) for exact
+commands, measurement meanings, and the remaining scheduler boundary.
+
+### Intended native data path
+
+```text
+UE QoS flow / bearer
+        │  explicit UE or logical-channel → slice association
+        ▼
+gNB slice manager ── validated per-slice budget ──► opt-in slice-aware MAC scheduler
+        ▲                                               │
+        │ PPO ratio update via simulation-thread API     │ existing UE/RBG/MCS policy
+        └───────────────────────────────────────────────┘
+                                                        ▼
+                                                 native LENA PHY
+                                                        │
+                                         existing measurements / E2 KPM
 ```
-Tier 3  Global HERO     federated aggregation of regional models
-Tier 2  Regional HERO   Near-RT RIC, multi-gNB coordination
-Tier 1  Local HERO      per-gNB PPO agent -> Slice Manager -> MAC scheduler
-```
-Loop: KPMs -> state -> policy -> slice ratio rho -> Slice Manager -> RB budget
-`floor(rho_s * N_RB)` -> MAC scheduler -> PHY -> new KPMs. HERO controls slice-level ratios
-only; the MAC scheduler keeps UE/RB/MCS scheduling.
 
-### Status
+Logical slices are an additional resource-control layer; they are not automatically
+equivalent to physical BWPs. The native BWP Manager continues to route bearers to BWPs
+using its existing configuration, while a slice association identifies which logical
+resource budget applies to a UE or logical channel. A scenario may later choose a BWP
+layout suitable for an experiment, but the current verified profile remains one BWP.
 
-| Part | Status |
-|---|---|
-| Python HERO stack (state builder, Slice Manager, PPO, regional/global FL, 7 baselines, S1-S8) | Implemented, runs against a **mock RAN adapter** (not ns-3) |
-| Tests | 26 passed, 1 skipped (live FlexRIC/E2 test, needs SCTP) in the development sandbox |
-| Local web console (FastAPI, port 8090) | Implemented |
-| Real ns-3 / FlexRIC integration | **Not implemented yet.** `FlexRICAdapter` is only an interface to fill in |
+The current opt-in scheduler preserves native PF UE selection and caps each slice's
+RBG-symbol allocation. Ratios are validated as a three-slice simplex and converted to
+per-symbol RBG caps; DL and UL are enforced independently. This is an upper cap: it does
+not guarantee minimum allocations, borrow unused capacity, reassign BWPs, or implement
+the paper's unspecified feasibility/rounding optimization. The default native PF
+scheduler remains available as the baseline. See [slice manager](integration/docs/slice-manager.md)
+for exact units and limitations.
 
-### Layout
+### Incremental implementation plan
+
+| Boundary | Intended responsibility | Status |
+|---|---|---|
+| Slice association | Map a UE and, where needed, its LCID/QoS flow to a logical slice; keep 5QI as QoS treatment, not slice identity | Opt-in UE-level IDs 1–3; per-flow mapping pending |
+| gNB Slice Manager | Own per-gNB slice configuration, validate ratio budgets, and expose usage/acceptance state | Opt-in `SliceBudgetManager`; accepts live local/regional PPO ratios |
+| Scheduler catalog | Keep the existing scheduler as baseline and provide an explicit opt-in slice-aware scheduler selection | `NrMacSchedulerHeroSlicePF` derives from native OFDMA PF; explicit runtime flag |
+| MAC enforcement | Apply budgets during native RBG allocation without replacing the selected scheduler's UE-level policy | Experimental per-slice DL/UL upper caps; no minimum guarantee or unused-budget borrowing |
+| HERO input | Connect local/regional PPO policies through simulation-thread-safe dispatch | Live sidecar action loop updates the correct per-gNB manager from native measurement windows; synchronous IPC can slow real-time execution |
+| Telemetry | Preserve existing KPM/E2 and local native measurement paths; add slice metrics only after their native definitions exist | Local CSV/dashboard carries UE slice/profile metadata; E2 KPM remains unchanged |
+
+The implemented extension is a modular native `contrib/nr` addition with explicit build
+registration and scenario selection. It does not depend on Orange ns-O-RAN source.
+Existing integration, original LENA BWP management, bearer handling, PHY/MAC behavior,
+and FlexRIC components remain intact. The default baseline is preserved. See the slice
+manager and PPO validation commands in [`integration/README.md`](integration/README.md);
+unused-budget borrowing, minimum guarantees, handover migration, and E2 slice control
+remain outside the implementation. No HERO learning equations were changed.
+
+### Repository layout
 
 ```
 HERO-slicing/
-├── src/hero/    env, state, slice_manager, policy, reward, local, regional,
-│                global_hero, fl, baselines, scenarios, metrics, runner, worker, cli
-├── web/         FastAPI backend + HTML frontend
-├── tests/       pytest suite
-├── scripts/     install, build, run and test scripts
-├── docs/        analysis, state availability, modifications, test report
-└── platforms/   upstream code from sections 2-4 (not committed)
+├── integration/       Independent native ns-3/LENA + original FlexRIC integration
+│   ├── dashboard/     Configuration, launch, visualization, and monitoring UI
+│   ├── learning/      Local/regional PPO, live measurement controller, and KPM state builders
+│   ├── e2-agent/      Original FlexRIC-backed simulator-side E2 agent
+│   ├── kpm/           Native LENA measurement collection and CSV export
+│   ├── lena-adapter/  gNB lifecycle and simulator bridge
+│   ├── control/       Currently supported private control extension
+│   └── docs/          Compatibility, validation, and known limitations
+├── platforms/         Installed upstream source/build trees; ignored by Git
+└── README.md
 ```
 
-### Python quick start
-
-```bash
-git clone https://github.com/Mio1999-adc/hero-slicing.git
-cd hero-slicing
-pip install -r requirements.txt
-./scripts/run_tests.sh
-./scripts/run_experiment.sh --method hero_slicing --scenario S5 --steps 300
-./scripts/run_web.sh            # open http://localhost:8090
-```
-
-### Planned ns-O-RAN changes (not done yet)
-
-| Change | File area |
-|---|---|
-| Slice-ratio parameter under E2SM-RC `Radio_Resource_Allocation_Control` | `contrib/oran-interface/model/ric-control-*` |
-| Implement the stubbed slice ID (S-NSSAI) in KPM indications | `contrib/oran-interface/model/kpm-indication.*` |
-| Slice Manager class on the gNB side | new file in `contrib/oran-interface/model/` |
-| Filter the candidate RB set by slice budget in the PF scheduler | `src/mmwave/model/mmwave-flex-tti-pf-mac-scheduler.cc` |
+Build and run the existing integration with the commands in
+[`integration/README.md`](integration/README.md). Slice-level MAC enforcement is a
+separate opt-in mode in the current build and dashboard controls; see
+[`slice-manager.md`](integration/docs/slice-manager.md). Live PPO ratio control is
+documented in [`ppo-learning.md`](integration/docs/ppo-learning.md); the native PF
+baseline remains the default.
+The PPO actor/critic, local/regional measurement-state builders, and live native-window
+controller are available under [`integration/learning`](integration/learning) and documented in
+[`ppo-learning.md`](integration/docs/ppo-learning.md). When PPO is enabled, sampled or
+inferred actions replace initial dashboard ratios after each real measurement window.
+For the module map and learning data/action flow relative to native LENA and FlexRIC,
+see [`HERO-Slicing learning architecture`](integration/docs/hero-learning-architecture.md).
 
 ## License
 

@@ -1,0 +1,135 @@
+{
+  "scenario": {
+    "gnbs": 1,
+    "ues": 3,
+    "duration_seconds": 6.0,
+    "sample_interval_ms": 200,
+    "slice_assignment": "one UE per slice",
+    "same_seed_pairs": [
+      11,
+      23,
+      37
+    ]
+  },
+  "formulation_summaries": {
+    "baseline": {
+      "mean_dl_throughput_mbps": {
+        "mean": 0.9743964444444444,
+        "sample_stddev": 0.09211802027431579,
+        "n": 3
+      },
+      "mean_ue_sla_satisfaction": {
+        "mean": 0.3866440925925925,
+        "sample_stddev": 0.006399673458667404,
+        "n": 3
+      },
+      "mean_dl_pdcp_delay_ms": {
+        "mean": 15.845072556503432,
+        "sample_stddev": 6.529385470707243,
+        "n": 3
+      },
+      "wall_seconds": {
+        "mean": 4.940247741000046,
+        "sample_stddev": 0.059271724139280196,
+        "n": 3
+      }
+    },
+    "ue-aware": {
+      "mean_dl_throughput_mbps": {
+        "mean": 1.0245475555555554,
+        "sample_stddev": 0.027483817730385187,
+        "n": 3
+      },
+      "mean_ue_sla_satisfaction": {
+        "mean": 0.3780495925925926,
+        "sample_stddev": 0.005709838186431057,
+        "n": 3
+      },
+      "mean_dl_pdcp_delay_ms": {
+        "mean": 12.200497868786917,
+        "sample_stddev": 3.211710461832024,
+        "n": 3
+      },
+      "wall_seconds": {
+        "mean": 4.978773077333244,
+        "sample_stddev": 0.08423303916789814,
+        "n": 3
+      }
+    }
+  },
+  "runs": [
+    {
+      "formulation": "baseline",
+      "seed": 11,
+      "wall_seconds": 4.992500728000323,
+      "mean_dl_throughput_mbps": 1.0267519999999999,
+      "mean_ue_sla_satisfaction": 0.3801948333333333,
+      "mean_dl_pdcp_delay_ms": 13.634025080461939,
+      "transitions": 28,
+      "updates": 3,
+      "mean_update_ms": 11.753071999919484,
+      "run_directory": "/tmp/hero-ppo-convergence-study-20261018/baseline-seed-11"
+    },
+    {
+      "formulation": "ue-aware",
+      "seed": 11,
+      "wall_seconds": 4.98964583399993,
+      "mean_dl_throughput_mbps": 1.0498986666666665,
+      "mean_ue_sla_satisfaction": 0.3714872222222222,
+      "mean_dl_pdcp_delay_ms": 9.30106461894976,
+      "transitions": 28,
+      "updates": 3,
+      "mean_update_ms": 12.275116000031025,
+      "run_directory": "/tmp/hero-ppo-convergence-study-20261018/ue-aware-seed-11"
+    },
+    {
+      "formulation": "baseline",
+      "seed": 23,
+      "wall_seconds": 4.952401219999956,
+      "mean_dl_throughput_mbps": 0.8680319999999999,
+      "mean_ue_sla_satisfaction": 0.38674444444444445,
+      "mean_dl_pdcp_delay_ms": 23.192897666542414,
+      "transitions": 28,
+      "updates": 3,
+      "mean_update_ms": 11.35083700000905,
+      "run_directory": "/tmp/hero-ppo-convergence-study-20261018/baseline-seed-23"
+    },
+    {
+      "formulation": "ue-aware",
+      "seed": 23,
+      "wall_seconds": 5.057041789999857,
+      "mean_dl_throughput_mbps": 0.9953386666666666,
+      "mean_ue_sla_satisfaction": 0.3807796666666666,
+      "mean_dl_pdcp_delay_ms": 11.647703766407057,
+      "transitions": 28,
+      "updates": 3,
+      "mean_update_ms": 12.846108999989761,
+      "run_directory": "/tmp/hero-ppo-convergence-study-20261018/ue-aware-seed-23"
+    },
+    {
+      "formulation": "baseline",
+      "seed": 37,
+      "wall_seconds": 4.875841274999857,
+      "mean_dl_throughput_mbps": 1.0284053333333332,
+      "mean_ue_sla_satisfaction": 0.392993,
+      "mean_dl_pdcp_delay_ms": 10.70829492250594,
+      "transitions": 28,
+      "updates": 3,
+      "mean_update_ms": 11.342747999909383,
+      "run_directory": "/tmp/hero-ppo-convergence-study-20261018/baseline-seed-37"
+    },
+    {
+      "formulation": "ue-aware",
+      "seed": 37,
+      "wall_seconds": 4.889631607999945,
+      "mean_dl_throughput_mbps": 1.0284053333333332,
+      "mean_ue_sla_satisfaction": 0.38188188888888885,
+      "mean_dl_pdcp_delay_ms": 15.652725221003935,
+      "transitions": 28,
+      "updates": 3,
+      "mean_update_ms": 12.5976700001047,
+      "run_directory": "/tmp/hero-ppo-convergence-study-20261018/ue-aware-seed-37"
+    }
+  ],
+  "interpretation": "Exploratory matched-seed result; do not infer convergence improvement from this report alone."
+}
